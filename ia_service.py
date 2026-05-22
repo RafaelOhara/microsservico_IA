@@ -1,17 +1,10 @@
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import API_KEY
 from models import LeituraSensores
 
-genai.configure(api_key=API_KEY)
-
-MODELO_IA = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    generation_config={"response_mime_type": "application/json"}
-)
-
 def _gerar_prompt_agronomico(dados: LeituraSensores) -> str:
-    # O sublinhado no início do nome da função indica que ela é privada (uso interno).
     return f"""
     Você é um agrônomo especialista em hidroponia.
 
@@ -26,9 +19,9 @@ def _gerar_prompt_agronomico(dados: LeituraSensores) -> str:
     1. Busque no seu próprio conhecimento quais são as faixas ideais de pH, temperatura e umidade para a cultura acima.
     2. Compare as leituras atuais com essas faixas ideais.
     3. Se todos os valores estiverem dentro da faixa, o status é "Normal".
-    4. Se algum valor estiver fora, o status é "Alerta". Sugira ações corretivas práticas.
+    4. Se algum valor estiver fora da faixa, o status é "Alerta". Sugira ações corretivas práticas.
 
-    FORMATO DE SAÍDA OBRIGATÓRIO (APENAS JSON):
+    FORMATO DE SAÍDA OBRIGATÓRIO:
     {{
       "parametros_ideais_utilizados": {{"ph": "faixa", "temperatura": "faixa", "umidade": "faixa"}},
       "status_sistema": "Normal ou Alerta",
@@ -39,18 +32,28 @@ def _gerar_prompt_agronomico(dados: LeituraSensores) -> str:
     """
 
 def _limpar_formatacao_markdown(texto: str) -> str:
-    """
-    Remove blocos de formatação (```json) que alguns modelos de linguagem
-    podem injetar por engano mesmo quando configurados para retornar JSON puro.
-    """
     texto = texto.strip()
     if texto.startswith("```"):
-        texto = texto.strip("").replace("json\n", "", 1)
+        texto = texto.strip("`").replace("json\n", "", 1)
     return texto
 
 def analisar_dados_cultivo(dados: LeituraSensores) -> dict:
+    # Checagem de segurança tardia: Se a Azure falhou em ler a chave, a API avisa em vez de quebrar
+    if not API_KEY:
+        raise ValueError("A chave GEMINI_API_KEY não está configurada no ambiente da Azure.")
+
+    # Inicia o cliente do NOVO SDK
+    cliente_ia = genai.Client(api_key=API_KEY)
     prompt = _gerar_prompt_agronomico(dados)
-    resposta_bruta = MODELO_IA.generate_content(prompt)
-    texto_limpo = _limpar_formatacao_markdown(resposta_bruta.text)
     
+    # Chama o modelo usando a nova estrutura do Google
+    resposta_bruta = cliente_ia.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+        )
+    )
+    
+    texto_limpo = _limpar_formatacao_markdown(resposta_bruta.text)
     return json.loads(texto_limpo)
